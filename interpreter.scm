@@ -132,7 +132,7 @@
 ;or just return it respectively.
 (define getVal
   (lambda (val environ)
-	(if (number? val)
+	(if (or (number? val) (eq? 'null val))
 	  val
 	  (lookup val environ)
 	  )
@@ -226,7 +226,7 @@
 	  ((eq? (car stmt) 'begin) (begin-stmt* stmt environ return break))
 	  ((eq? (car stmt) 'while) (while-stmt stmt environ return))
 	  ((eq? (car stmt) 'function) (function-stmt stmt environ return))
-	  ((eq? (car stmt) 'funcall) (funcall-stmt stmt))
+	  ((eq? (car stmt) 'funcall) ((lambda (throw-away) environ)(funcall-stmt stmt environ)))
 	  ((eq? (car stmt) 'break) (break 'break))
 	  ((eq? (car stmt) 'continue) (break 'continue))
 	  (else (basic-stmt stmt environ))
@@ -351,7 +351,7 @@
 		(letrec ((loop
 				   (lambda (tree environ)
 					 (if (null? tree)
-					   (error "Program ended without a return")
+					   (return 'null)
 					   (loop (cdr tree) (full-stmt (car tree) environ return))
 					   )
 					 )
