@@ -1,17 +1,20 @@
 ;Brendan Higgins
 
-(load "loopSimpleParser.scm")
+(load "functionParser.scm")
 
+;Returns a new environment
 (define newEnviron
   (lambda () '((()())) )
   )
 
+;Pushes a new environment frame on to the environment
 (define push
   (lambda (environ)
 	(cons '(()()) environ)
 	)
   )
 
+;Pops the top layer off the environment and returns it
 (define head
   (lambda (environ)
 	(if (null? environ)
@@ -21,18 +24,21 @@
 	)
   )
 
+;Returns the top layer identifier list of an environment
 (define getVars
   (lambda (environ)
 	(car (head environ))
 	)
   )
 
+;Returns the top layer store of an environment
 (define getStore
   (lambda (environ)
 	(car (cdr (head environ)))
 	)
   )
 
+;Pops the top layer of the environment and returns the resulting environment
 (define tail
   (lambda (environ)
 	(cond
@@ -42,8 +48,10 @@
 	)
   )
 
+;Pops the top layer of the environment and returns the resulting environment
 (define pop tail)
 
+;Returns whether a value is in a list
 (define inList?
   (lambda (var l)
 	(cond
@@ -54,12 +62,14 @@
 	)
   )
 
+;Returns whether a variable is in the top layer of an environment
 (define inLayer?
   (lambda (var environ)
 	(inList? var (getVars environ))
 	)
   )
 
+;Returns the index of a value in a list
 (define getIndex
   (lambda (var l)
 	(cond
@@ -70,6 +80,7 @@
 	)
   )
 
+;Returns the value in a list corresponding to the specified index
 (define getByIndex
   (lambda (index l)
 	(if (= index 0)
@@ -79,12 +90,14 @@
 	)
   )
 
+;Declares a value in the top layer of an environment initializing it to null
 (define declareVar
   (lambda (var environ)
 	(cons (cons (cons var (getVars environ)) (cons (cons (box 'null) (getStore environ)) '())) (tail environ))
 	)
   )
 
+;Returns the value that is bound to a variable in the environment
 (define lookup
   (lambda (var environ)
 	(if (inLayer? var environ)
@@ -94,6 +107,7 @@
 	)
   )
 
+;Binds a value to the most recent declaration of var
 (define assign
   (lambda (var value environ)
 	(letrec
@@ -113,10 +127,6 @@
 	  )
 	)
   )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;!!!   OLD CODE   !!!;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;determines whether val is a variable or a constant and will either look it up
 ;or just return it respectively.
@@ -154,7 +164,7 @@
   (lambda (stmt environ)
 	(cond
 	  ((not (list? stmt)) (getVal stmt environ))
-	  ((and (list? stmt) (eq? (car stmt) 'funcall)) (funcall stmt))
+	  ((and (list? stmt) (eq? (car stmt) 'funcall)) (funcall-stmt stmt environ))
 	  ((and (= (length stmt) 2) (list? (car (cdr stmt)))) (- (basic-stmt (car (cdr stmt)) environ)))
 	  ((= (length stmt) 2) (- (getVal (car (cdr stmt)) environ)))
 	  ((and (list? (car (cdr stmt))) (list? (car (cdr (cdr stmt))))) (execute (car stmt) (basic-stmt (car (cdr stmt)) environ) (basic-stmt (car (cdr (cdr stmt))) environ)))
@@ -197,6 +207,8 @@
 	)
   )
 
+;takes an if statement, evaluates the appropriate condition expression, and continues interpreting the appropriate subexpression
+;	This version does not take a break/continue continuation
 (define full-stmt
   (lambda (stmt environ return)
 	(full-stmt* stmt environ return (lambda (throw-away) (error "not in loop")))
@@ -222,12 +234,18 @@
 	)
   )
 
+;Takes a parameter and a target value and assigns the value of var to parameter
 (define declare-param
   (lambda (param var oldenv newenv)
-	(assign param (lookup var oldenv) (declareVar param newenv))
+	(cond
+	  ((number? var) (assign param var (declareVar param newenv)))
+	  ((list? var) (assign param (basic-stmt var oldenv) (declareVar param newenv)))
+	  (else (assign param (lookup var oldenv) (declareVar param newenv)))
+	  )
 	)
   )
 
+;Takes a list of parameters and a list of target values assigning the value of each target values to the parameters
 (define declare-params
   (lambda (paramlist varlist oldenv newenv)
 	(if (null? paramlist)
@@ -237,50 +255,61 @@
 	)
   )
 
+;Looks up a function in the environment returning the body of the function
 (define lookup-body
   (lambda (name environ)
-	(car (cdr (lookup name)))
+	(car (cdr (lookup name environ)))
 	)
   )
 
+;Looks up a function in the environment returning the parameter list of the function
 (define lookup-params
   (lambda (name environ)
-	(car (lookup name))
+	(car (lookup name environ))
 	)
   )
 
+;Takes a statement and an environment and executes the function represented 
+;	in the statement and returns the return value of the function
 (define funcall-stmt
   (lambda (stmt environ)
-	(interpret-tree (lookup-body (car (cdr stmt))) (declare-params (lookup-params (car cdr stmt)) (cdr (cdr stmt)) environ (push (pop environ))))
+	(interpret-tree (lookup-body (car (cdr stmt)) environ) (declare-params (lookup-params (car (cdr stmt)) environ) (cdr (cdr stmt)) environ (push (pop environ))))
 	)
   )
 
+;Takes a statement in which a function is declared and creates a parameter list function body pair
+;	for storing in the environment
 (define funcify
   (lambda (stmt)
 	(cons (car (cdr (cdr stmt))) (cons (car (cdr (cdr (cdr stmt)))) '()))
 	)
   )
 
+;stores a function in the enviroment or calls it if it is the main function
 (define function-stmt
   (lambda (stmt environ return)
 	(if (eq? (car (cdr stmt)) 'main)
-	  (assign (car (cdr stmt)) (funcify stmt) (declareVar (car (cdr stmt) environ)))
-	  (return (interpret-tree (cdr (cdr (cdr stmt))) environ))
+	  (return (interpret-tree (car (cdr (cdr (cdr stmt)))) (push environ)))
+	  (assign (car (cdr stmt)) (funcify stmt) (declareVar (car (cdr stmt)) environ))
+	  )
 	)
   )
 
+;defines a new scope region does not take a break/continue continuation
 (define begin-stmt
   (lambda (stmt environ return)
 	(begin-stmt* stmt environ return (lambda () (error "not in loop")))
 	)
   )
 
+;defines a new scope region
 (define begin-stmt*
   (lambda (stmt environ return break)
 	(pop (interpret-inner-tree (cdr stmt) (push environ) return break))
 	)
   )
 
+;loops throug a set of statements to represent a while loop
 (define while-stmt
   (lambda (stmt environ return)
 	(letrec ((iteration
@@ -304,6 +333,7 @@
 	)
   )
 
+;interprets a tree of statements inside a while loop or a new level of scope
 (define interpret-inner-tree
   (lambda (tree environ return break)
 	(cond
@@ -313,6 +343,7 @@
 	)
   )
 
+;interprets a tree of statements
 (define interpret-tree
   (lambda (tree environ)
 	(call/cc
