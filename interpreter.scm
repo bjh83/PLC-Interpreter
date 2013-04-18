@@ -1,6 +1,6 @@
 ;Brendan Higgins
 
-(load "functionParser.scm")
+(load "classParser.scm")
 
 ;Returns a new environment
 (define newEnviron
@@ -164,6 +164,7 @@
   (lambda (stmt environ)
 	(cond
 	  ((not (list? stmt)) (getVal stmt environ))
+	  ((and (list? stmt) (eq? (car stmt) 'dot)) (dot-stmt stmt environ))
 	  ((and (list? stmt) (eq? (car stmt) 'funcall)) (funcall-stmt stmt environ))
 	  ((and (= (length stmt) 2) (list? (car (cdr stmt)))) (- (basic-stmt (car (cdr stmt)) environ)))
 	  ((= (length stmt) 2) (- (getVal (car (cdr stmt)) environ)))
@@ -178,9 +179,11 @@
 ;assigns the a value given in the stmt to the result of the rest of the stmt
 (define assign-stmt
   (lambda (stmt environ)
-	(if (list? (car (cdr (cdr stmt))))
-	  (assign (car (cdr stmt)) (basic-stmt (car (cdr (cdr stmt))) environ) environ)
-	  (assign (car (cdr stmt)) (getVal (car (cdr (cdr stmt))) environ) environ)
+	(cond
+	  ((and (list? (car (cdr stmt))) (eq? (car (car (cdr stmt))) 'dot)) 
+	   (assign (dot-stmt (car (cdr stmt)) environ) (basic-stmt (car (cdr (cdr stmt))) environ) (lookup (car (cdr (car (cdr (stmt))))) environ)))
+	  ((list? (car (cdr (cdr stmt)))) (assign (car (cdr stmt)) (basic-stmt (car (cdr (cdr stmt))) environ) environ))
+	  (else (assign (car (cdr stmt)) (getVal (car (cdr (cdr stmt))) environ) environ))
 	  )
 	)
   )
@@ -225,11 +228,32 @@
 	  ((eq? (car stmt) 'var) (declare-stmt stmt environ))
 	  ((eq? (car stmt) 'begin) (begin-stmt* stmt environ return break))
 	  ((eq? (car stmt) 'while) (while-stmt stmt environ return))
-	  ((eq? (car stmt) 'function) (function-stmt stmt environ return))
+	  ((eq? (car stmt) 'static-var) (declare-stmt stmt environ))
+	  ((eq? (car stmt) 'static-function) (function-stmt stmt environ return))
+	  ((eq? (car stmt) 'class) (class-stmt stmt environ break return))
 	  ((eq? (car stmt) 'funcall) ((lambda (throw-away) environ)(funcall-stmt stmt environ)))
 	  ((eq? (car stmt) 'break) (break 'break))
 	  ((eq? (car stmt) 'continue) (break 'continue))
 	  (else (basic-stmt stmt environ))
+	  )
+	)
+  )
+
+;look up class construct
+(define dot-stmt
+  (lambda (stmt environ)
+	(lookup (car (cdr (cdr stmt))) (lookup (car (cdr stmt)) environ))
+	)
+  )
+
+;map tree into memory
+(define class-stmt
+  (lambda (stmt environ class return)
+	(cond 
+	  ((and (not (null? (car (cdr (cdr stmt))))) (eq? (car (car (cdr (cdr stmt)))) 'extends)) 
+	   (assign (car (cdr stmt)) (build-class (car (cdr (cdr (cdr stmt)))) (assign 'super (lookup (car (cdr (car (cdr (cdr stmt))))) environ) 
+                                               (declareVar 'super (lookup (car (cdr (car (cdr (cdr stmt))))) environ)))) (declareVar (car (cdr stmt)) environ)))
+	  (else (assign (car (cdr stmt)) (build-class (car (cdr (cdr (cdr stmt)))) (newEnviron)) (declareVar (car (cdr stmt)) environ)))
 	  )
 	)
   )
@@ -269,12 +293,31 @@
 	)
   )
 
+;push class definition on environment
+(define class-push
+  (lambda (class environ)
+    (append class environ)
+    )
+  )
+
+;lookup a class construct
+(define dot-lookup
+  (lambda (stmt environ)
+    (lookup (car (cdr stmt)) environ)
+    )
+  )
+
 ;Takes a statement and an environment and executes the function represented 
 ;	in the statement and returns the return value of the function
 (define funcall-stmt
   (lambda (stmt environ)
+    (if (and (list? (car (cdr stmt))) (eq? (car (car (cdr stmt))) 'dot))
+        (interpret-tree (lookup-body (car (cdr (cdr (car (cdr stmt))))) (dot-lookup (car (cdr stmt)) environ))
+                        (declare-params (lookup-params (car (cdr (cdr (car (cdr stmt))))) (dot-lookup (car (cdr stmt)) environ))
+                                        (cdr (cdr stmt)) environ (class-push (dot-lookup (car (cdr stmt)) environ) (push (pop environ)))))
 	(interpret-tree (lookup-body (car (cdr stmt)) environ) (declare-params (lookup-params (car (cdr stmt)) environ) (cdr (cdr stmt)) environ (push (pop environ))))
-	)
+        )
+    )
   )
 
 ;Takes a statement in which a function is declared and creates a parameter list function body pair
@@ -288,12 +331,9 @@
 ;stores a function in the enviroment or calls it if it is the main function
 (define function-stmt
   (lambda (stmt environ return)
-	(if (eq? (car (cdr stmt)) 'main)
-	  (return (interpret-tree (car (cdr (cdr (cdr stmt)))) (push environ)))
 	  (assign (car (cdr stmt)) (funcify stmt) (declareVar (car (cdr stmt)) environ))
 	  )
 	)
-  )
 
 ;defines a new scope region does not take a break/continue continuation
 (define begin-stmt
@@ -343,6 +383,16 @@
 	)
   )
 
+;builds a class definition list to be placed in the environment
+(define build-class
+  (lambda (tree body)
+	(if (or (null? body) (null? tree))
+	  body
+	  (build-class (cdr tree) (full-stmt (car tree) body (lambda () (error "not in execution"))))
+	  )
+	)
+  )
+
 ;interprets a tree of statements
 (define interpret-tree
   (lambda (tree environ)
@@ -364,10 +414,19 @@
 	)
   )
 
-;calls the parser and passes the parse tree and an environment list to the interpret tree loop (interpret-tree)
-(define interpret
-  (lambda (filename)
-	(interpret-tree (parser filename) (newEnviron))
-	)
+;maps entire tree into memory
+(define interpret-top
+  (lambda (tree environ class)
+    (if (null? tree)
+        (funcall-stmt (cons 'funcall (cons (cons 'dot (cons class (cons 'main '()))) '())) (push (class-push (lookup class environ) environ)))
+        (interpret-top (cdr tree) (full-stmt* (car tree) environ (lambda () (error "no return specified")) class) class)
+        )
+    )
   )
 
+;calls the parser and passes the parse tree and an environment list to the interpret tree loop (interpret-tree)
+(define interpret
+  (lambda (filename class)
+	(interpret-top (parser filename) (newEnviron) class)
+	)
+  )
