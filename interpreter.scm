@@ -427,6 +427,6 @@
 ;calls the parser and passes the parse tree and an environment list to the interpret tree loop (interpret-tree)
 (define interpret
   (lambda (filename class)
-	(interpret-top (parser filename) (newEnviron) class)
+	(interpret-top (parser filename) (newEnviron) (string->symbol class))
 	)
   )
