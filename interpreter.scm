@@ -239,6 +239,12 @@
 	)
   )
 
+(define new-stmt
+  (lambda (stmt environ)
+	(merge (copy-inst-vars (get-inst-vars (lookup (car (cdr stmt)) environ))) (drop-inst-vars (lookup (car (cdr stmt)) environ)))
+	)
+  )
+
 ;look up class construct
 (define dot-stmt
   (lambda (stmt environ)
@@ -383,12 +389,64 @@
 	)
   )
 
-;builds a class definition list to be placed in the environment
+;puts top level var declarations in the instance variable section
+(define class-full-stmt
+  (lambda (stmt body inst-vars)
+	(if (eq? (car stmt) 'var)
+	  (declare-stmt stmt inst-vars)
+	  (full-stmt stmt body (lambda () (error "not in execution")))
+	  )
+	)
+  )
+
 (define build-class
   (lambda (tree body)
+	(build-class* tree body (newEnviron))
+	)
+  )
+
+(define drop-inst-vars
+  (lambda (body)
+	(cons (car body) (cons (car (cdr body)) '()))
+	)
+  )
+
+(define merge
+  (lambda (head tail)
+	(cons (append (getVars head) (getVars tail)) (cons (append (getStore head) (getStore tail)) '()))
+	)
+  )
+
+(define copy-inst-vars
+  (lambda (inst-vars)
+	(cons (car inst-vars) (cons (copy-inst-store (car (cdr inst-vars)) '()) '()))
+	)
+  )
+
+(define copy-inst-store
+  (lambda (inst-store copy)
+	(if (null? inst-store)
+	  copy
+	  (copy-inst-store (cdr inst-store) (cons (box (unbox (car inst-store))) copy))
+	  )
+	)
+  )
+
+(define get-inst-vars
+  (lambda (body)
+	(if (null? (cdr (cdr body)))
+	  '(()())
+	(car (cdr (cdr body)))
+	)
+	)
+  )
+
+;builds a class definition list to be placed in the environment
+(define build-class*
+  (lambda (tree body inst-vars)
 	(if (or (null? body) (null? tree))
-	  body
-	  (build-class (cdr tree) (full-stmt (car tree) body (lambda () (error "not in execution"))))
+	  (append body inst-vars)
+	  (build-class* (cdr tree) (class-full-stmt (car tree) body inst-vars) inst-vars)
 	  )
 	)
   )
@@ -430,3 +488,4 @@
 	(interpret-top (parser filename) (newEnviron) (string->symbol class))
 	)
   )
+
