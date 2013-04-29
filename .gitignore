@@ -2,7 +2,7 @@
 *.js
 
 #Connamacher code
-functionParser.scm
+classParser.scm
 lex.scm
 
 #testdir
