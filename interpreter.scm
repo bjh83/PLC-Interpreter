@@ -93,11 +93,11 @@
 ;Declares a value in the top layer of an environment initializing it to null
 (define declareVar
   (lambda (var environ)
-    (if (not (null? (cdr (cdr (head environ)))))
-        (cons (cons (cons var (getVars environ)) (cons (cons (box 'null) (getStore environ)) (cons (get-inst-vars environ) '()))) (tail environ))
-	(cons (cons (cons var (getVars environ)) (cons (cons (box 'null) (getStore environ)) '())) (tail environ))
+	(if (not (null? (cdr (cdr (head environ)))))
+	  (cons (cons (cons var (getVars environ)) (cons (cons (box 'null) (getStore environ)) (cons (get-inst-vars environ) '()))) (tail environ))
+	  (cons (cons (cons var (getVars environ)) (cons (cons (box 'null) (getStore environ)) '())) (tail environ))
+	  )
 	)
-    )
   )
 
 ;Returns the value that is bound to a variable in the environment
@@ -247,6 +247,7 @@
 	)
   )
 
+;processes a try catch block
 (define try-catch-stmt
   (lambda (stmt environ return break out-throw)
 	(letrec
@@ -259,18 +260,26 @@
 			 )
 		   )
 		 )
-           (
-            exception (try (car (car (cdr stmt))) environ return break)
-           ))
-	  (begin (if (not (eq? exception 'null))
-			   (full-stmt* (car (car (cdr (cdr (car (cdr (cdr stmt))))))) 
-						   (assign (car (car (cdr (car (cdr (cdr stmt)))))) exception (declareVar (car (car (cdr (car (cdr (cdr stmt)))))) environ)) return break out-throw))
-			 (full-stmt* (car (cdr (car (cdr (cdr (cdr stmt)))))) environ return break out-throw)
-			 )
+	   (
+		exception (try (car (car (cdr stmt))) environ return break)
+		))
+	  (begin 
+		(cond 
+		  ((and (not (eq? exception 'null)) (not (null? (car (cdr (cdr stmt))))))
+		   (begin (if (not (null? (car (cdr (cdr (car (cdr (cdr stmt)))))))) (full-stmt* (car (car (cdr (cdr (car (cdr (cdr stmt))))))) 
+																						 (assign (car (car (cdr (car (cdr (cdr stmt)))))) exception 
+																								 (declareVar (car (car (cdr (car (cdr (cdr stmt)))))) environ)) return break out-throw))
+				  (if (not (null? (car (cdr (cdr (cdr stmt)))))) (full-stmt* (car (car (cdr (car (cdr (cdr (cdr stmt))))))) environ return break out-throw))))
+		  ((not (eq? exception 'null)) (begin (full-stmt* (car (car (cdr (car (cdr (cdr (cdr stmt))))))) environ return break out-throw) (out-throw exception)))
+		  (else (full-stmt* (car (car (cdr (car (cdr (cdr (cdr stmt))))))) environ return break out-throw))
+		  )
+		environ
+		)
 	  )
 	)
   )
 
+;creates an instance of a class
 (define new-stmt
   (lambda (stmt environ)
 	(letrec ((new-class 
@@ -289,10 +298,11 @@
 	)
   )
 
+;for assigning to class and object varibles
 (define dot-assign
   (lambda (stmt value environ)
-    (assign (car (cdr (cdr stmt))) value (lookup (car (cdr stmt)) environ))
-    )
+	(assign (car (cdr (cdr stmt))) value (lookup (car (cdr stmt)) environ))
+	)
   )
 
 ;map tree into memory
@@ -300,8 +310,10 @@
   (lambda (stmt environ class return)
 	(cond 
 	  ((and (not (null? (car (cdr (cdr stmt))))) (eq? (car (car (cdr (cdr stmt)))) 'extends)) 
-	   (assign (car (cdr stmt)) (cons (head (build-class (car (cdr (cdr (cdr stmt)))) (assign 'super (lookup (car (cdr (car (cdr (cdr stmt))))) environ) 
-																							  (declareVar 'super (lookup (car (cdr (car (cdr (cdr stmt))))) environ))))) '()) (declareVar (car (cdr stmt)) environ)))
+	   (assign (car (cdr stmt)) 
+			   (cons (head (build-class (car (cdr (cdr (cdr stmt)))) 
+										(assign 'super (lookup (car (cdr (car (cdr (cdr stmt))))) environ) 
+												(declareVar 'super (lookup (car (cdr (car (cdr (cdr stmt))))) environ))))) '()) (declareVar (car (cdr stmt)) environ)))
 	  (else (assign (car (cdr stmt)) (cons (head (build-class (car (cdr (cdr (cdr stmt)))) (push environ))) '()) (declareVar (car (cdr stmt)) environ)))
 	  )
 	)
@@ -443,6 +455,7 @@
 	)
   )
 
+;puts instance fields and methods in object separate from static
 (define inst-var-stmt
   (lambda (stmt inst-vars)
 	(cond 
@@ -453,12 +466,14 @@
 	)
   )
 
+;provides an abstraction to build-class*
 (define build-class
   (lambda (tree body)
 	(build-class* tree body (newEnviron))
 	)
   )
 
+;removes the instance section from a class
 (define drop-inst-vars
   (lambda (body)
 	(if (not (null? (cdr (cdr (head body)))))
@@ -468,18 +483,21 @@
 	)
   )
 
+;merges to layers of a environment
 (define merge
   (lambda (head tail)
 	(cons (cons (append (car head) (car tail)) (cons (append (car (cdr head)) (car (cdr tail))) '())) '())
 	)
   )
 
+;copies the instance section so that each instance has unique boxes for its instance variables
 (define copy-inst-vars
   (lambda (inst-vars)
 	(cons (car inst-vars) (cons (copy-inst-store (car (cdr inst-vars)) '()) '()))
 	)
   )
 
+;copies the instance section so that each instance has unique boxes for its instance variables
 (define copy-inst-store
   (lambda (inst-store copy)
 	(if (null? inst-store)
@@ -489,6 +507,7 @@
 	)
   )
 
+;gets the instance variable section
 (define get-inst-vars
   (lambda (body)
 	(if (null? (cdr (cdr (head body))))
@@ -532,22 +551,21 @@
 ;maps entire tree into memory
 (define interpret-top
   (lambda (tree environ class throw)
-		 (if (null? tree)
-		   (funcall-stmt (cons 'funcall (cons (cons 'dot (cons class (cons 'main '()))) '())) (push (class-push (lookup class environ) environ)) throw)
-		   (interpret-top (cdr tree) (full-stmt* (car tree) environ (lambda () (error "no return specified")) class throw) class throw)
-		   )
-		 )
+	(if (null? tree)
+	  (funcall-stmt (cons 'funcall (cons (cons 'dot (cons class (cons 'main '()))) '())) (push (class-push (lookup class environ) environ)) throw)
+	  (interpret-top (cdr tree) (full-stmt* (car tree) environ (lambda () (error "no return specified")) class throw) class throw)
+	  )
 	)
+  )
 
 ;calls the parser and passes the parse tree and an environment list to the interpret tree loop (interpret-tree)
 (define interpret
   (lambda (filename class)
-    (call/cc
-     (lambda (throw)
-	(interpret-top (parser filename) (newEnviron) (string->symbol class) throw)
-       )
-     )
+	(call/cc
+	  (lambda (throw)
+		(interpret-top (parser filename) (newEnviron) (string->symbol class) throw)
+		)
+	  )
 	)
   )
 
-(define print* (lambda (val) (begin (display val)(newline) val)))
