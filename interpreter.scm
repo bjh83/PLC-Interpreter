@@ -170,7 +170,7 @@
 	  ((and (list? stmt) (eq? (car stmt) 'dot)) (dot-stmt stmt environ))
 	  ((and (list? stmt) (eq? (car stmt) 'funcall)) (funcall-stmt stmt environ throw))
 	  ((and (= (length stmt) 2) (list? (car (cdr stmt)))) (- (basic-stmt (car (cdr stmt)) environ throw)))
-	  ((and (= (length stmt) 2) (eq? (car stmt) 'new)) (new-stmt stmt environ throw))
+	  ((and (= (length stmt) 2) (eq? (car stmt) 'new)) (new-stmt stmt environ))
 	  ((= (length stmt) 2) (- (getVal (car (cdr stmt)) environ)))
 	  ((and (list? (car (cdr stmt))) (list? (car (cdr (cdr stmt))))) 
 	   (execute (car stmt) (basic-stmt (car (cdr stmt)) environ throw) (basic-stmt (car (cdr (cdr stmt))) environ throw)))
@@ -186,9 +186,9 @@
   (lambda (stmt environ throw)
 	(cond
 	  ((and (list? (car (cdr stmt))) (eq? (car (car (cdr stmt))) 'dot)) 
-	   (assign (dot-stmt (car (cdr stmt)) environ) (basic-stmt (car (cdr (cdr stmt))) environ throw) (lookup (car (cdr (car (cdr (stmt))))) environ) throw))
-	  ((list? (car (cdr (cdr stmt)))) (assign (car (cdr stmt)) (basic-stmt (car (cdr (cdr stmt))) environ throw) environ throw))
-	  (else (assign (car (cdr stmt)) (getVal (car (cdr (cdr stmt))) environ) environ throw))
+	   (dot-assign (car (cdr stmt)) (basic-stmt (car (cdr (cdr stmt))) environ throw) environ))
+	  ((list? (car (cdr (cdr stmt)))) (assign (car (cdr stmt)) (basic-stmt (car (cdr (cdr stmt))) environ throw) environ))
+	  (else (assign (car (cdr stmt)) (getVal (car (cdr (cdr stmt))) environ) environ))
 	  )
 	)
   )
@@ -254,14 +254,17 @@
 		 (lambda (stmt environ return break)
 		   (call/cc
 			 (lambda (throw)
-			   (begin (full-stmt* (car (cdr stmt)) environ return break throw) 'null)
+			   (begin (full-stmt* stmt environ return break throw) 'null)
 			   )
 			 )
 		   )
-		 ))
-	  (begin (if (not (eq? (set! exception (try (car (cdr stmt)) environ return break)) 'null))
-			   (full-stmt* (car (cdr (cdr (car (cdr (cdr stmt)))))) 
-						   (assign (set! var (car (car (cdr (car (cdr (cdr stmt))))))) exception (declareVar var environ)) return break out-throw))
+		 )
+           (
+            exception (try (car (car (cdr stmt))) environ return break)
+           ))
+	  (begin (if (not (eq? exception 'null))
+			   (full-stmt* (car (car (cdr (cdr (car (cdr (cdr stmt))))))) 
+						   (assign (car (car (cdr (car (cdr (cdr stmt)))))) exception (declareVar (car (car (cdr (car (cdr (cdr stmt)))))) environ)) return break out-throw))
 			 (full-stmt* (car (cdr (car (cdr (cdr (cdr stmt)))))) environ return break out-throw)
 			 )
 	  )
@@ -284,6 +287,12 @@
   (lambda (stmt environ)
 	(lookup (car (cdr (cdr stmt))) (lookup (car (cdr stmt)) environ))
 	)
+  )
+
+(define dot-assign
+  (lambda (stmt value environ)
+    (assign (car (cdr (cdr stmt))) value (lookup (car (cdr stmt)) environ))
+    )
   )
 
 ;map tree into memory
@@ -429,7 +438,7 @@
 	(cond 
 	  ((eq? (car stmt) 'var) body)
 	  ((eq? (car stmt) 'function) body)
-	  (else (full-stmt stmt body (lambda () (error "not in execution"))))
+	  (else (full-stmt stmt body (lambda (value) (error "not in execution")) (lambda (value) (error "not in execution"))))
 	  )
 	)
   )
@@ -437,8 +446,8 @@
 (define inst-var-stmt
   (lambda (stmt inst-vars)
 	(cond 
-	  ((eq? (car stmt) 'var) (declare-stmt stmt inst-vars))
-	  ((eq? (car stmt) 'function) (function-stmt stmt inst-vars (lambda () (error "not in execution"))))
+	  ((eq? (car stmt) 'var) (declare-stmt stmt inst-vars (lambda (value) (error "not in excecution"))))
+	  ((eq? (car stmt) 'function) (function-stmt stmt inst-vars (lambda (value) (error "not in execution"))))
 	  (else inst-vars)
 	  )
 	)
@@ -508,7 +517,7 @@
 				   (lambda (tree environ throw)
 					 (if (null? tree)
 					   (return 'null)
-					   (loop (cdr tree) (full-stmt (car tree) environ return throw))
+					   (loop (cdr tree) (full-stmt (car tree) environ return throw) throw)
 					   )
 					 )
 				   )
@@ -522,22 +531,23 @@
 
 ;maps entire tree into memory
 (define interpret-top
-  (lambda (tree environ class)
-	(call/cc
-	  ((lambda (throw)
+  (lambda (tree environ class throw)
 		 (if (null? tree)
 		   (funcall-stmt (cons 'funcall (cons (cons 'dot (cons class (cons 'main '()))) '())) (push (class-push (lookup class environ) environ)) throw)
-		   (interpret-top (cdr tree) (full-stmt* (car tree) environ (lambda () (error "no return specified")) class) class throw)
+		   (interpret-top (cdr tree) (full-stmt* (car tree) environ (lambda () (error "no return specified")) class throw) class throw)
 		   )
-		 ))
-	  )
+		 )
 	)
-  )
 
 ;calls the parser and passes the parse tree and an environment list to the interpret tree loop (interpret-tree)
 (define interpret
   (lambda (filename class)
-	(interpret-top (parser filename) (newEnviron) (string->symbol class))
+    (call/cc
+     (lambda (throw)
+	(interpret-top (parser filename) (newEnviron) (string->symbol class) throw)
+       )
+     )
 	)
   )
+
 (define print* (lambda (val) (begin (display val)(newline) val)))
