@@ -93,8 +93,11 @@
 ;Declares a value in the top layer of an environment initializing it to null
 (define declareVar
   (lambda (var environ)
+    (if (not (null? (cdr (cdr (head environ)))))
+        (cons (cons (cons var (getVars environ)) (cons (cons (box 'null) (getStore environ)) (cons (get-inst-vars environ) '()))) (tail environ))
 	(cons (cons (cons var (getVars environ)) (cons (cons (box 'null) (getStore environ)) '())) (tail environ))
 	)
+    )
   )
 
 ;Returns the value that is bound to a variable in the environment
@@ -167,6 +170,7 @@
 	  ((and (list? stmt) (eq? (car stmt) 'dot)) (dot-stmt stmt environ))
 	  ((and (list? stmt) (eq? (car stmt) 'funcall)) (funcall-stmt stmt environ))
 	  ((and (= (length stmt) 2) (list? (car (cdr stmt)))) (- (basic-stmt (car (cdr stmt)) environ)))
+	  ((and (= (length stmt) 2) (eq? (car stmt) 'new)) (new-stmt stmt environ))
 	  ((= (length stmt) 2) (- (getVal (car (cdr stmt)) environ)))
 	  ((and (list? (car (cdr stmt))) (list? (car (cdr (cdr stmt))))) (execute (car stmt) (basic-stmt (car (cdr stmt)) environ) (basic-stmt (car (cdr (cdr stmt))) environ)))
 	  ((list? (car (cdr stmt))) (execute (car stmt) (basic-stmt (car (cdr stmt)) environ) (getVal (car (cdr (cdr stmt))) environ)))
@@ -230,6 +234,7 @@
 	  ((eq? (car stmt) 'while) (while-stmt stmt environ return))
 	  ((eq? (car stmt) 'static-var) (declare-stmt stmt environ))
 	  ((eq? (car stmt) 'static-function) (function-stmt stmt environ return))
+	  ((eq? (car stmt) 'function) (function-stmt stmt environ return))
 	  ((eq? (car stmt) 'class) (class-stmt stmt environ break return))
 	  ((eq? (car stmt) 'funcall) ((lambda (throw-away) environ)(funcall-stmt stmt environ)))
 	  ((eq? (car stmt) 'break) (break 'break))
@@ -241,14 +246,19 @@
 
 (define new-stmt
   (lambda (stmt environ)
-	(merge (copy-inst-vars (get-inst-vars (lookup (car (cdr stmt)) environ))) (drop-inst-vars (lookup (car (cdr stmt)) environ)))
+	(letrec ((new-class 
+                  (merge (copy-inst-vars (get-inst-vars (lookup (car (cdr stmt)) environ))) (car (drop-inst-vars (lookup (car (cdr stmt)) environ))))
+                  )
+                 )
+          (assign 'this new-class (declareVar 'this new-class))
+          )
 	)
   )
 
 ;look up class construct
 (define dot-stmt
   (lambda (stmt environ)
-	(lookup (car (cdr (cdr stmt))) (lookup (car (cdr stmt)) environ))
+    (lookup (car (cdr (cdr stmt))) (lookup (car (cdr stmt)) environ))
 	)
   )
 
@@ -257,9 +267,9 @@
   (lambda (stmt environ class return)
 	(cond 
 	  ((and (not (null? (car (cdr (cdr stmt))))) (eq? (car (car (cdr (cdr stmt)))) 'extends)) 
-	   (assign (car (cdr stmt)) (build-class (car (cdr (cdr (cdr stmt)))) (assign 'super (lookup (car (cdr (car (cdr (cdr stmt))))) environ) 
-                                               (declareVar 'super (lookup (car (cdr (car (cdr (cdr stmt))))) environ)))) (declareVar (car (cdr stmt)) environ)))
-	  (else (assign (car (cdr stmt)) (build-class (car (cdr (cdr (cdr stmt)))) (newEnviron)) (declareVar (car (cdr stmt)) environ)))
+	   (assign (car (cdr stmt)) (cons (head (build-class (car (cdr (cdr (cdr stmt)))) (assign 'super (lookup (car (cdr (car (cdr (cdr stmt))))) environ) 
+                                               (declareVar 'super (lookup (car (cdr (car (cdr (cdr stmt))))) environ))))) '()) (declareVar (car (cdr stmt)) environ)))
+	  (else (assign (car (cdr stmt)) (cons (head (build-class (car (cdr (cdr (cdr stmt)))) (push environ))) '()) (declareVar (car (cdr stmt)) environ)))
 	  )
 	)
   )
@@ -320,7 +330,7 @@
     (if (and (list? (car (cdr stmt))) (eq? (car (car (cdr stmt))) 'dot))
         (interpret-tree (lookup-body (car (cdr (cdr (car (cdr stmt))))) (dot-lookup (car (cdr stmt)) environ))
                         (declare-params (lookup-params (car (cdr (cdr (car (cdr stmt))))) (dot-lookup (car (cdr stmt)) environ))
-                                        (cdr (cdr stmt)) environ (class-push (dot-lookup (car (cdr stmt)) environ) (push (pop environ)))))
+                                        (cdr (cdr stmt)) environ (push (class-push (dot-lookup (car (cdr stmt)) environ) (pop environ)))))
 	(interpret-tree (lookup-body (car (cdr stmt)) environ) (declare-params (lookup-params (car (cdr stmt)) environ) (cdr (cdr stmt)) environ (push (pop environ))))
         )
     )
@@ -391,12 +401,23 @@
 
 ;puts top level var declarations in the instance variable section
 (define class-full-stmt
-  (lambda (stmt body inst-vars)
-	(if (eq? (car stmt) 'var)
-	  (declare-stmt stmt inst-vars)
-	  (full-stmt stmt body (lambda () (error "not in execution")))
+  (lambda (stmt body)
+	(cond 
+	  ((eq? (car stmt) 'var) body)
+	  ((eq? (car stmt) 'function) body)
+	  (else (full-stmt stmt body (lambda () (error "not in execution"))))
 	  )
 	)
+  )
+
+(define inst-var-stmt
+  (lambda (stmt inst-vars)
+    (cond 
+	  ((eq? (car stmt) 'var) (declare-stmt stmt inst-vars))
+	  ((eq? (car stmt) 'function) (function-stmt stmt inst-vars (lambda () (error "not in execution"))))
+	  (else inst-vars)
+	  )
+    )
   )
 
 (define build-class
@@ -407,13 +428,16 @@
 
 (define drop-inst-vars
   (lambda (body)
-	(cons (car body) (cons (car (cdr body)) '()))
+    (if (not (null? (cdr (cdr (head body)))))
+        (cons (cons (car (head body)) (cons (car (cdr (head body))) '())) '())
+        body
+        )
 	)
   )
 
 (define merge
   (lambda (head tail)
-	(cons (append (getVars head) (getVars tail)) (cons (append (getStore head) (getStore tail)) '()))
+	(cons (cons (append (car head) (car tail)) (cons (append (car (cdr head)) (car (cdr tail))) '())) '())
 	)
   )
 
@@ -426,7 +450,7 @@
 (define copy-inst-store
   (lambda (inst-store copy)
 	(if (null? inst-store)
-	  copy
+	  (reverse copy)
 	  (copy-inst-store (cdr inst-store) (cons (box (unbox (car inst-store))) copy))
 	  )
 	)
@@ -434,9 +458,9 @@
 
 (define get-inst-vars
   (lambda (body)
-	(if (null? (cdr (cdr body)))
+	(if (null? (cdr (cdr (head body))))
 	  '(()())
-	(car (cdr (cdr body)))
+	(car (cdr (cdr (head body))))
 	)
 	)
   )
@@ -445,8 +469,8 @@
 (define build-class*
   (lambda (tree body inst-vars)
 	(if (or (null? body) (null? tree))
-	  (append body inst-vars)
-	  (build-class* (cdr tree) (class-full-stmt (car tree) body inst-vars) inst-vars)
+	  (cons (append (car (drop-inst-vars body)) (merge (car inst-vars) (get-inst-vars body))) '())
+	  (build-class* (cdr tree) (class-full-stmt (car tree) body) (inst-var-stmt (car tree) inst-vars))
 	  )
 	)
   )
@@ -488,4 +512,4 @@
 	(interpret-top (parser filename) (newEnviron) (string->symbol class))
 	)
   )
-
+(define print* (lambda (val) (begin (display val)(newline) val)))
