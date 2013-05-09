@@ -1,13 +1,3 @@
 #Test files
 *.js
 
-#Connamacher code
-classParser.scm
-lex.scm
-
-#testdir
-tests/
-Gemfile
-Gemfile.lock
-Rakefile
-

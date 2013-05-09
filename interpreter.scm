@@ -266,10 +266,12 @@
 	  (begin 
 		(cond 
 		  ((and (not (eq? exception 'null)) (not (null? (car (cdr (cdr stmt))))))
-		   (begin (if (not (null? (car (cdr (cdr (car (cdr (cdr stmt)))))))) (full-stmt* (car (car (cdr (cdr (car (cdr (cdr stmt))))))) 
-																						 (assign (car (car (cdr (car (cdr (cdr stmt)))))) exception 
-																								 (declareVar (car (car (cdr (car (cdr (cdr stmt)))))) environ)) return break out-throw))
-				  (if (not (null? (car (cdr (cdr (cdr stmt)))))) (full-stmt* (car (car (cdr (car (cdr (cdr (cdr stmt))))))) environ return break out-throw))))
+		   (begin (if (not (null? (car (cdr (cdr (car (cdr (cdr stmt)))))))) 
+					(full-stmt* (car (car (cdr (cdr (car (cdr (cdr stmt))))))) 
+								(assign (car (car (cdr (car (cdr (cdr stmt)))))) exception 
+										(declareVar (car (car (cdr (car (cdr (cdr stmt)))))) environ)) return break out-throw)
+					#f)
+				  (if (not (null? (car (cdr (cdr (cdr stmt)))))) (full-stmt* (car (car (cdr (car (cdr (cdr (cdr stmt))))))) environ return break out-throw) #f)))
 		  ((not (eq? exception 'null)) (begin (full-stmt* (car (car (cdr (car (cdr (cdr (cdr stmt))))))) environ return break out-throw) (out-throw exception)))
 		  (else (full-stmt* (car (car (cdr (car (cdr (cdr (cdr stmt))))))) environ return break out-throw))
 		  )
